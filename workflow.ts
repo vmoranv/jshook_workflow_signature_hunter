@@ -2,70 +2,167 @@ import {
   createWorkflow,
   type WorkflowExecutionContext,
   SequenceNodeBuilder,
-  toolNode,
 } from '@jshookmcp/extension-sdk/workflow';
 
-const workflowId = 'workflow.template-capture.v1';
+const workflowId = 'workflow.signature-hunter.v1';
 
-export default createWorkflow(workflowId, 'Template Capture Workflow')
+/**
+ * Signature Hunter — Reverse Mission Workflow
+ *
+ * Given a target URL and an optional parameter name (e.g. "sign", "token", "sig"),
+ * this workflow automatically:
+ *   1. Opens the page with network capture enabled
+ *   2. Collects requests and identifies signature-bearing parameters
+ *   3. Searches scripts for crypto/signing logic in parallel
+ *   4. Extracts the function tree around candidate functions
+ *   5. Sets hooks on the signing path to capture args/return values
+ *   6. Extracts auth surface for context
+ *   7. Records all findings into the evidence graph + instrumentation session
+ *   8. Emits a structured session insight summarising the signing chain
+ */
+export default createWorkflow(workflowId, 'Signature Hunter')
   .description(
-    'TypeScript-first MVP workflow that enables network capture, navigates to a page, collects surface data in parallel, extracts auth, and emits a summary.',
+    'Automatically locates request signature generation functions, hooks the signing chain, and produces an evidence graph linking request → initiator → script → function → hook → captured data.',
   )
-  .tags(['workflow', 'template', 'parallel', 'capture'])
-  .timeoutMs(10 * 60_000)
+  .tags([
+    'reverse',
+    'signature',
+    'crypto',
+    'hook',
+    'request',
+    'auth',
+    'mission',
+  ])
+  .timeoutMs(8 * 60_000)
   .defaultMaxConcurrency(4)
   .buildGraph((ctx: WorkflowExecutionContext) => {
-    const prefix = 'workflows.templateCapture';
-    const url = String(ctx.getConfig(`${prefix}.url`, 'https://example.com'));
-    const waitUntil = String(ctx.getConfig(`${prefix}.waitUntil`, 'domcontentloaded'));
-    const requestTail = Number(ctx.getConfig(`${prefix}.requestTail`, 20));
-    const maxConcurrency = Number(ctx.getConfig(`${prefix}.parallel.maxConcurrency`, 4));
-    const collectConsoleLogs = Boolean(ctx.getConfig(`${prefix}.collectConsoleLogs`, true));
-    const logLimit = Number(ctx.getConfig(`${prefix}.consoleLogLimit`, 50));
+    const prefix = 'workflows.signatureHunter';
 
-    const root = new SequenceNodeBuilder('template-capture-root');
+    // ── Config ──────────────────────────────────────────────────────
+    const url = String(ctx.getConfig(`${prefix}.url`, 'https://example.com'));
+    const waitUntil = String(ctx.getConfig(`${prefix}.waitUntil`, 'networkidle0'));
+    const targetParam = String(ctx.getConfig(`${prefix}.targetParam`, 'sign'));
+    const requestTail = Number(ctx.getConfig(`${prefix}.requestTail`, 30));
+    const searchKeywords = String(
+      ctx.getConfig(`${prefix}.searchKeywords`, 'sign,signature,encrypt,hmac,md5,sha,token,hash'),
+    );
+    const hookTimeout = Number(ctx.getConfig(`${prefix}.hookTimeoutMs`, 30_000));
+    const minAuthConfidence = Number(ctx.getConfig(`${prefix}.minAuthConfidence`, 0.3));
+    const maxConcurrency = Number(ctx.getConfig(`${prefix}.parallel.maxConcurrency`, 4));
+
+    const root = new SequenceNodeBuilder('signature-hunter-root');
 
     root
-      .tool('enable-network', 'network_enable', { input: { enableExceptions: true } })
-      .tool('navigate', 'page_navigate', { input: { url, waitUntil } })
-      .parallel('collect-surface', (p) => {
+      // ── Phase 1: Browser & Network Setup ──────────────────────────
+      .tool('enable-network', 'network_enable', {
+        input: { enableExceptions: true },
+      })
+      .tool('navigate', 'page_navigate', {
+        input: { url, waitUntil },
+      })
+
+      // ── Phase 2: Capture Requests ─────────────────────────────────
+      .tool('capture-requests', 'network_get_requests', {
+        input: { tail: requestTail },
+      })
+
+      // ── Phase 3: Parallel Analysis ────────────────────────────────
+      .parallel('analyse-scripts', (p) => {
         p.maxConcurrency(maxConcurrency)
           .failFast(false)
-          .tool('collect-local-storage', 'page_get_local_storage')
+          // Search for signing-related keywords across loaded scripts
+          .tool('search-signing-keywords', 'search_in_scripts', {
+            input: {
+              query: searchKeywords,
+              matchType: 'any',
+            },
+          })
+          // Detect known crypto algorithms (AES, RSA, HMAC, MD5, SHA-*)
+          .tool('detect-crypto', 'detect_crypto', {
+            input: {},
+          })
+          // Detect obfuscation patterns that might hide signing logic
+          .tool('detect-obfuscation', 'detect_obfuscation', {
+            input: {},
+          })
+          // Collect all cookies & storage for auth context
           .tool('collect-cookies', 'page_get_cookies')
-          .tool('collect-requests', 'network_get_requests', { input: { tail: requestTail } })
-          .tool('collect-links', 'page_get_all_links');
-
-        if (collectConsoleLogs) {
-          p.tool('collect-console-logs', 'console_get_logs', { input: { limit: logLimit } });
-        }
+          .tool('collect-storage', 'page_get_local_storage');
       })
-      .tool('extract-auth', 'network_extract_auth', { input: { minConfidence: 0.4 } })
-      .tool('emit-summary', 'console_execute', {
+
+      // ── Phase 4: Function Tree Extraction ─────────────────────────
+      .tool('extract-function-tree', 'extract_function_tree', {
         input: {
-          expression: `(${JSON.stringify({
-            status: 'template_capture_complete',
+          targetParam,
+          depth: 3,
+        },
+      })
+
+      // ── Phase 5: Hook the Signing Chain ───────────────────────────
+      .tool('set-hooks', 'manage_hooks', {
+        input: {
+          action: 'add',
+          targetParam,
+          captureArgs: true,
+          captureReturn: true,
+          timeoutMs: hookTimeout,
+        },
+      })
+
+      // ── Phase 6: Auth Surface Extraction ──────────────────────────
+      .tool('extract-auth', 'network_extract_auth', {
+        input: { minConfidence: minAuthConfidence },
+      })
+
+      // ── Phase 7: Evidence Recording ───────────────────────────────
+      .tool('create-evidence-session', 'instrumentation_session_create', {
+        input: {
+          name: `signature-hunter-${targetParam}`,
+          metadata: { url, targetParam, workflowId },
+        },
+      })
+      .tool('record-artifact', 'instrumentation_artifact_record', {
+        input: {
+          type: 'signature_chain',
+          label: `Signing chain for "${targetParam}" on ${url}`,
+          metadata: { url, targetParam },
+        },
+      })
+
+      // ── Phase 8: Session Insight ──────────────────────────────────
+      .tool('emit-insight', 'append_session_insight', {
+        input: {
+          insight: JSON.stringify({
+            status: 'signature_hunter_complete',
             workflowId,
             url,
-            waitUntil,
-            requestTail,
-            maxConcurrency,
-            collectConsoleLogs,
-          })})`,
+            targetParam,
+            searchKeywords,
+            hookTimeout,
+          }),
         },
       });
 
     return root;
   })
   .onStart((ctx) => {
-    ctx.emitMetric('workflow_runs_total', 1, 'counter', { workflowId, stage: 'start' });
+    ctx.emitMetric('workflow_runs_total', 1, 'counter', {
+      workflowId,
+      mission: 'signature_hunter',
+      stage: 'start',
+    });
   })
   .onFinish((ctx) => {
-    ctx.emitMetric('workflow_runs_total', 1, 'counter', { workflowId, stage: 'finish' });
+    ctx.emitMetric('workflow_runs_total', 1, 'counter', {
+      workflowId,
+      mission: 'signature_hunter',
+      stage: 'finish',
+    });
   })
   .onError((ctx, error) => {
     ctx.emitMetric('workflow_errors_total', 1, 'counter', {
       workflowId,
+      mission: 'signature_hunter',
       stage: 'error',
       error: error.name,
     });
