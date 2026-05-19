@@ -1,6 +1,7 @@
 name: signature-hunter
 description: JSHook workflow for signature-hunter
 author: vmoranv
+source_repo: https://github.com/vmoranv/jshook_workflow_signature_hunter
 tags:
   - workflow
   - signature-hunter
