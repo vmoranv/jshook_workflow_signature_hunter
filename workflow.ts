@@ -1,7 +1,7 @@
 import {
-  createWorkflow,
+  defineWorkflow,
+  sequenceStep,
   type WorkflowExecutionContext,
-  SequenceNodeBuilder,
 } from '@jshookmcp/extension-sdk/workflow';
 
 const workflowId = 'workflow.signature-hunter.v1';
@@ -20,8 +20,9 @@ const workflowId = 'workflow.signature-hunter.v1';
  *   7. Records all findings into the evidence graph + instrumentation session
  *   8. Emits a structured session insight summarising the signing chain
  */
-export default createWorkflow(workflowId, 'Signature Hunter')
-  .description(
+export default defineWorkflow(workflowId, 'Signature Hunter', (workflow) =>
+  workflow
+.description(
     'Automatically locates request signature generation functions, hooks the signing chain, and produces an evidence graph linking request → initiator → script → function → hook → captured data.',
   )
   .tags([
@@ -50,7 +51,7 @@ export default createWorkflow(workflowId, 'Signature Hunter')
     const minAuthConfidence = Number(ctx.getConfig(`${prefix}.minAuthConfidence`, 0.3));
     const maxConcurrency = Number(ctx.getConfig(`${prefix}.parallel.maxConcurrency`, 4));
 
-    const root = new SequenceNodeBuilder('signature-hunter-root');
+    return sequenceStep('signature-hunter-root', (root) => {
 
     root
       // ── Phase 1: Browser & Network Setup ──────────────────────────
@@ -143,7 +144,7 @@ export default createWorkflow(workflowId, 'Signature Hunter')
         },
       });
 
-    return root;
+    });
   })
   .onStart((ctx) => {
     ctx.emitMetric('workflow_runs_total', 1, 'counter', {
@@ -167,4 +168,4 @@ export default createWorkflow(workflowId, 'Signature Hunter')
       error: error.name,
     });
   })
-  .build();
+  );
